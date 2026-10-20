@@ -77,3 +77,60 @@ plot(strategy.closedtrades, "closed")`, mk([[10, 10, 10, 10], [11, 11, 11, 11], 
   assert.deepEqual(p('size'), [0, 2, 2]);
   assert.equal(p('avg')[2], 11);
 });
+
+test('on-close orders fill after execution, including the first bar', () => {
+  const r = runPine(`//@version=6
+strategy("close", process_orders_on_close=true, pyramiding=10)
+if bar_index == 0
+    strategy.entry("A", strategy.long)
+plot(strategy.opentrades, "seen")`, mk([[100, 100, 100, 100], [101, 101, 101, 101]]));
+  assert.deepEqual(r.plots[0].values, [0, 1]);
+  assert.equal(r.strategy.open[0].entryBar, 0);
+  assert.equal(r.strategy.open[0].entry, 100);
+});
+
+test('FIFO exits use oldest entries; ANY exits use the requested entry', () => {
+  const body = `if bar_index == 0
+    strategy.entry("A", strategy.long, qty=2)
+if bar_index == 1
+    strategy.entry("B", strategy.long, qty=1)
+if bar_index == 2
+    strategy.close("B")`;
+  const rows = [[100,100,100,100],[110,110,110,110],[120,120,120,120],[120,120,120,120]];
+  for (const rule of ['FIFO', 'ANY']) {
+    const s = run(body, rows, `strategy("fifo", pyramiding=10, process_orders_on_close=true, close_entries_rule="${rule}")`);
+    assert.equal(s.trades.length, 1);
+    assert.equal(s.trades[0].note, rule === 'FIFO' ? 'A' : 'B');
+    assert.equal(s.trades[0].lots, 1);
+    assert.equal(s.trades[0].pnl, rule === 'FIFO' ? 20 : 10);
+  }
+});
+
+test('FIFO bracket quantity does not repeatedly consume an older position', () => {
+  const s = run(`if bar_index == 0
+    strategy.entry("A", strategy.long, qty=3)
+if bar_index == 1
+    strategy.entry("B", strategy.long, qty=1)
+    strategy.exit("xB", "B", limit=115)`,
+  [[100,100,100,100],[110,110,110,110],[110,120,109,116]],
+  'strategy("fifo", pyramiding=10, process_orders_on_close=true)');
+  assert.equal(s.trades.length, 1);
+  assert.equal(s.trades[0].lots, 1);
+  assert.equal(s.trades[0].note, 'A');
+  assert.equal(s.open.reduce((s,t)=>s+t.lots,0), 3);
+});
+
+test('runtime.error stops a strategy on the wrong chart timeframe', () => {
+  assert.throws(() => runPine(`//@version=6
+strategy("guard")
+if timeframe.in_seconds() < 900
+    runtime.error("Use 15m")`, {...mk([[100,100,100,100]]),tf:300}), /Use 15m/);
+});
+
+test('saved input.time values remain numeric timestamps', () => {
+  const r=runPine(`//@version=6
+indicator("date")
+t=input.time(timestamp("2000-01-01T00:00:00Z"), "Start")
+plot(t+1)`, mk([[100,100,100,100]]), {Start:'946684800000'});
+  assert.equal(r.plots[0].values[0], 946684800001);
+});

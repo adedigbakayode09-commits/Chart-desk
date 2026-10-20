@@ -65,6 +65,26 @@ export function createStrategy(cfg = {}) {
   }
   function closeAllAt(price, exitId, comment) { for (const t of [...S.open]) closeTrade(t, t.qty, price, exitId, comment); }
 
+  // Entry IDs select the amount to exit; FIFO determines which entries supply it.
+  function closePosition(target, qty, price, exitId, comment) {
+    const candidates = C.closeEntriesRule === 'ANY' ? [target] : S.open.filter(t => t.dir === target.dir);
+    for (const t of [...candidates]) {
+      if (qty <= 1e-12) break;
+      qty -= closeTrade(t, Math.min(qty, t.qty), price, exitId, comment);
+    }
+  }
+
+  function fillMarkets(price) {
+    for (const o of S.orders.filter(x => x.market)) {
+      S.orders.splice(S.orders.indexOf(o), 1);
+      if (o.kind === 'close') {
+        const targets = S.open.filter(t => o.all || t.id === o.id);
+        let qty = targets.reduce((s, t) => s + t.qty, 0) * (o.qtyPct ?? 100) / 100;
+        if (targets.length) closePosition(targets[0], qty, price - slip(targets[0].dir), o.id || 'Close', o.comment || (o.all ? 'Close all' : 'Close'));
+      } else fillEntry(o, price + slip(o.dir));
+    }
+  }
+
   /** Fill an entry / order at `price`. */
   function fillEntry(o, price) {
     const pos = posSize();
@@ -96,7 +116,7 @@ export function createStrategy(cfg = {}) {
     }
     return { tp, sl };
   }
-  const exitsFor = t => S.orders.filter(o => o.kind === 'exit' && (!o.from || o.from === t.id));
+  const exitsFor = t => S.orders.filter(o => o.kind === 'exit' && (!o.from || o.from === t.id) && !o.filledTargets?.has(t));
 
   /** Triggers on the bar path: entries (limit / stop) and exits for each open trade. dir: +1 when hit rising. */
   function triggers() {
@@ -121,7 +141,8 @@ export function createStrategy(cfg = {}) {
       if (!S.open.includes(tr.t)) return;
       const qty = tr.o.qty != null ? Math.min(tr.o.qty, tr.t.qty) : tr.t.qty * (tr.o.qtyPct ?? 100) / 100;
       const comment = tr.kind === 'tp' ? (tr.o.commentProfit || tr.o.comment) : tr.kind === 'trail' ? (tr.o.commentTrailing || tr.o.comment) : (tr.o.commentLoss || tr.o.comment);
-      closeTrade(tr.t, qty, price, tr.o.id, comment || { tp: 'Take-profit', sl: 'Stop-loss', trail: 'Trailing stop' }[tr.kind]);
+      (tr.o.filledTargets ||= new Set()).add(tr.t);
+      closePosition(tr.t, qty, price, tr.o.id, comment || { tp: 'Take-profit', sl: 'Stop-loss', trail: 'Trailing stop' }[tr.kind]);
       return;
     }
     S.orders.splice(S.orders.indexOf(tr.o), 1);
@@ -149,12 +170,7 @@ export function createStrategy(cfg = {}) {
       barIndex = i; bar = b; barTime = b.time;
       const o0 = b.open;
       // market orders first, in the order they were placed
-      for (const o of S.orders.filter(x => x.market)) {
-        S.orders.splice(S.orders.indexOf(o), 1);
-        if (o.kind === 'close') {
-          for (const t of S.open.filter(t => o.all || t.id === o.id)) closeTrade(t, t.qty * (o.qtyPct ?? 100) / 100, o0 - slip(t.dir), o.id || 'Close', o.comment || (o.all ? 'Close all' : 'Close'));
-        } else fillEntry(o, o0 + slip(o.dir));
-      }
+      fillMarkets(o0);
       updateExcursion(o0);
       // gaps: anything already beyond its level at the open fills at the open
       for (let pass = 0, fired = true; fired && pass < 10; pass++) {
@@ -183,6 +199,9 @@ export function createStrategy(cfg = {}) {
     },
     /** The script ran on this bar's close: mark equity. */
     afterBar(i, b) {
+      // Orders created during this execution cannot change strategy.* mid-script.
+      // process_orders_on_close adds a fill attempt after the entire execution.
+      if (C.processOnClose) fillMarkets(b.close);
       const eq = equityAt(b.close);
       if (eq > S.peak) S.peak = eq;
       S.maxDD = Math.max(S.maxDD, S.peak - eq);
@@ -193,13 +212,11 @@ export function createStrategy(cfg = {}) {
     entry(id, dir, { qty = null, limit = null, stop = null, comment = '', oca = null } = {}) {
       S.orders = S.orders.filter(o => !((o.kind === 'entry' || o.kind === 'order') && o.id === id)); // same id replaces
       const o = { kind: 'entry', id, dir, qty, limit, stop, comment, oca, market: limit == null && stop == null };
-      if (o.market && C.processOnClose && bar) { fillEntry(o, bar.close + slip(dir)); return; }
       S.orders.push(o);
     },
     order(id, dir, { qty = null, limit = null, stop = null, comment = '', oca = null } = {}) {
       S.orders = S.orders.filter(o => !((o.kind === 'entry' || o.kind === 'order') && o.id === id));
       const o = { kind: 'order', id, dir, qty, limit, stop, comment, oca, market: limit == null && stop == null };
-      if (o.market && C.processOnClose && bar) { fillEntry(o, bar.close + slip(dir)); return; }
       S.orders.push(o);
     },
     exit(id, from, p = {}) {
@@ -211,12 +228,12 @@ export function createStrategy(cfg = {}) {
     },
     close(id, { comment = '', qtyPct = 100, immediately = false } = {}) {
       if (!S.open.some(t => t.id === id)) return;
-      if ((immediately || C.processOnClose) && bar) { for (const t of S.open.filter(t => t.id === id)) closeTrade(t, t.qty * qtyPct / 100, bar.close - slip(t.dir), id, comment || 'Close'); return; }
+      if (immediately && bar) { const targets = S.open.filter(t => t.id === id); closePosition(targets[0], targets.reduce((s, t) => s + t.qty, 0) * qtyPct / 100, bar.close - slip(targets[0].dir), id, comment || 'Close'); return; }
       S.orders.push({ kind: 'close', id, all: false, qtyPct, comment, market: true });
     },
     closeAll({ comment = '', immediately = false } = {}) {
       if (!S.open.length) return;
-      if ((immediately || C.processOnClose) && bar) { closeAllAt(bar.close, 'Close all', comment || 'Close all'); return; }
+      if (immediately && bar) { closeAllAt(bar.close, 'Close all', comment || 'Close all'); return; }
       S.orders.push({ kind: 'close', id: '', all: true, comment, market: true });
     },
     cancel(id) { S.orders = S.orders.filter(o => o.id !== id || o.kind === 'close'); },

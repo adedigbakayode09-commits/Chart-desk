@@ -166,7 +166,7 @@ export class Tester {
       h('div', { class: 'tester-form' },
         h('div', { class: 'tester-target' }, h('b', null, `${view.symbol} · ${tfLabel(view.cfg.tf)}`), h('span', { class: 'muted' }, 'active chart')),
         h('label', { class: 'field wide' }, h('span', null, 'Strategy'), this.strategySelect()),
-        h('p', { class: 'muted small' }, 'Pine strategy: orders follow TradingView\'s broker emulator — market orders fill at the next bar\'s open, limits / stops / exits when the bar reaches them (open → high/low → close).',
+        h('p', { class: 'muted small' }, 'Pine simulation: market orders fill at the next open, or after execution at the signal close when the script requests it. Compare using the same symbol feed, timeframe, dates, inputs and properties. Higher-timeframe indicators use the history loaded for this test; starting later changes their warm-up.',
           ' ', h('button', { class: 'link', onclick: () => { this.app.showPanel('scripts'); this.app.scriptEditor.select(sc.id); } }, 'Edit script')),
         inputs.length ? h('div', { class: 'cs-heading' }, 'Inputs') : null, this.paramsForm.el,
         h('div', { class: 'cs-heading' }, 'Properties'), this.form.el,
@@ -193,6 +193,8 @@ export class Tester {
     if (this.app.replay.active) to = Math.min(to, this.app.replay.cursor);
     this.running = true;
     const tf = view.cfg.tf;
+    this.result = null;
+    this.renderResults();
     try {
       this.setProgress(0.05, `Loading ${view.symbol} ${tfLabel(tf)} bars…`);
       const bars = await fetchRange(view.symbol, tf, from, to, n => this.setProgress(0.2, `Loading bars… ${n.toLocaleString()}`));
@@ -204,12 +206,12 @@ export class Tester {
       const rep = res.strategy;
       if (!rep) throw new Error('The script ran but has no strategy(…) declaration');
       const last = bars[bars.length - 1];
-      // open trades are marked to the last close, so the totals match the equity curve
-      const trades = [...rep.trades, ...rep.open.map((o, k) => ({ id: `open${k}`, side: o.side, lots: o.lots, entry: o.entry, exit: last.close, entryTime: o.entryTime, exitTime: last.time, gross: o.unrealized, commission: 0, pnl: o.unrealized, reason: 'Open (marked to market)', note: o.id, r: null }))];
+      // Closed-trade statistics must not count unrealized positions as completed trades.
+      const trades = rep.trades;
       let bal = rep.cfg.initial;
       for (const t of trades) { bal += t.pnl; t.balanceAfter = bal; }
       const r = {
-        trades, equity: rep.equity, rejected: [], spreadInfo: null, intrabar: 'ohlc', pine: true,
+        trades, open: rep.open, openProfit: rep.openProfit, equity: rep.equity, rejected: [], spreadInfo: null, intrabar: 'ohlc', pine: true,
         metrics: computeMetrics(trades, rep.equity, rep.cfg.initial, bars, tfSec(tf)),
         symbol: view.symbol, tf, from: bars[0].time, to: last.time, bars: bars.length, strategy: sc.name, params: inputs,
         note: (res.warnings || []).slice(0, 3).join(' '),
@@ -221,6 +223,7 @@ export class Tester {
       view.setMarkers(trades, 'tester');
     } catch (e) {
       this.setProgress(null, '');
+      this.status.textContent = `Backtest stopped: ${e.message}`;
       toast(e.message, 'error');
     } finally { this.running = false; }
   }
@@ -309,6 +312,7 @@ export class Tester {
     const head = h('div', { class: 'metrics' },
       card('Net profit', fmtUsd(m.net, true), m.net >= 0 ? 'up' : 'down', `${(m.netPct * 100).toFixed(2)}%`),
       card('Total trades', m.total, '', `${m.wins} W / ${m.losses} L`),
+      ...(r.pine ? [card('Open P&L', fmtUsd(r.openProfit || 0, true), (r.openProfit || 0) >= 0 ? 'up' : 'down', `${r.open?.length || 0} open entries · excluded from closed-trade statistics`)] : []),
       card('Win rate', `${(m.winRate * 100).toFixed(2)}%`),
       card('Profit factor', Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : '∞', m.profitFactor >= 1 ? 'up' : 'down'),
       card('Max drawdown', fmtUsd(-m.maxDrawdown), 'down', `${(m.maxDrawdownPct * 100).toFixed(2)}%`),

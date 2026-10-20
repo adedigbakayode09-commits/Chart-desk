@@ -489,6 +489,7 @@ const SIGS = {
   'input.source': ['defval', 'title', 'tooltip', 'inline', 'group', 'display'],
   'input.symbol': ['defval', 'title', 'tooltip', 'inline', 'group', 'confirm', 'display'],
   'input.price': ['defval', 'title', 'tooltip', 'inline', 'group', 'confirm', 'display'],
+  'input.time': ['defval', 'title', 'tooltip', 'inline', 'group', 'confirm', 'display'],
   'input.text_area': ['defval', 'title', 'tooltip', 'group', 'confirm', 'display'],
   'color.new': ['color', 'transp'], 'color.rgb': ['red', 'green', 'blue', 'transp'],
   'line.new': ['x1', 'y1', 'x2', 'y2', 'xloc', 'extend', 'color', 'style', 'width'],
@@ -1338,7 +1339,12 @@ export function runPine(src, data, inputs = {}, opts = {}) {
       case 'float': return num(ev(nd.args[0]));
       case 'bool': return truthy(ev(nd.args[0]));
       case 'string': case 'color': case 'line': case 'label': case 'box': case 'table': case 'linefill': case 'polyline': return nd.args.length ? ev(nd.args[0]) : NA;
-      case 'runtime.error': { const msg = ev(nd.args[0]); warnings.add(`runtime.error: ${msg}`); return NA; }
+      case 'runtime.error': {
+        // Security captures evaluate the script to collect the requested expression only.
+        // A chart-timeframe guard must apply to the main chart, not those internal runs.
+        if (!opts.capture) throw new PineError(String(ev(nd.args[0])), nd.line);
+        return NA;
+      }
       case 'request.security': {
         const sigS = SIGS['request.security'];
         const sym = namedVal(nd, 'symbol', sigS), tf = namedVal(nd, 'timeframe', sigS);
@@ -1522,7 +1528,7 @@ export function runPine(src, data, inputs = {}, opts = {}) {
       const spec = { name: key, label: title, kind, group: group ? String(group).replace(/[█\s]+/g, ' ').trim() : '', inline: inline ? String(inline) : '' };
       if (kind === 'source') spec.def = defNode.name, spec.options = [...SOURCES];
       else if (kind === 'bool') spec.def = def ? 1 : 0, spec.bool = true;
-      else if (kind === 'int' || kind === 'float' || kind === 'price') {
+      else if (kind === 'int' || kind === 'float' || kind === 'price' || kind === 'time') {
         spec.def = num(def);
         const minv = namedVal(nd, 'minval', sig), maxv = namedVal(nd, 'maxval', sig), step = namedVal(nd, 'step', sig);
         spec.min = isNa(minv) || minv == null ? null : minv; spec.max = isNa(maxv) || maxv == null ? null : maxv;
@@ -1548,7 +1554,7 @@ export function runPine(src, data, inputs = {}, opts = {}) {
   function inputValue(kind, raw, def) {
     switch (kind) {
       case 'bool': return raw != null ? raw === true || raw === 'true' || Number(raw) === 1 : !!def;
-      case 'int': case 'float': case 'price': { const v = raw != null && raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : num(def); return kind === 'int' ? Math.round(v) : v; }
+      case 'int': case 'float': case 'price': case 'time': { const v = raw != null && raw !== '' && Number.isFinite(Number(raw)) ? Number(raw) : num(def); return kind === 'int' ? Math.round(v) : v; }
       default: return raw != null ? String(raw) : def;
     }
   }
@@ -1857,8 +1863,10 @@ export function runPine(src, data, inputs = {}, opts = {}) {
         strat = createStrategy({
           initial: opt(v[13]) ?? 1000000, qtyType: str(v[11] || 'fixed').replace('strategy.', '') || 'fixed', qtyValue: opt(v[12]) ?? 1, pyramiding: opt(v[6]) ?? 0,
           commissionType: str(v[16] || 'percent').replace('strategy.commission.', '') || 'percent', commission: opt(v[17]) ?? 0, slippage: opt(v[15]) ?? 0,
-          processOnClose: truthy(v[18] ?? false), mintick, ...ov,
+          processOnClose: truthy(v[18] ?? false), closeEntriesRule: str(v[19] || 'FIFO'), mintick, ...ov,
         });
+        strat.beforeBar(i, barAt(i));
+        if (opt(v[20]) || opt(v[21])) warnings.add('Pine margin calls are not simulated; margin_long / margin_short can produce different results from the reference platform.');
       }
       return NA;
     }
