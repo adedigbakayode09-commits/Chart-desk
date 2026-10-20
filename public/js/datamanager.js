@@ -36,7 +36,7 @@ export class DataManager {
     this.jobsBox = h('div', { class: 'jobs' });
     const symSub = x => (x.provider === 'twelvedata'
       ? (x.tdCoverage?.rows ? `Twelve Data · to ${fmtDate(x.tdCoverage.last)}` : 'Twelve Data')
-      : (x.coverage?.months ? `Dukascopy · ${x.coverage.months} mo` : 'Dukascopy · no data'));
+      : x.provider === 'tradingview' ? x.tv : (x.coverage?.months ? `Dukascopy · ${x.coverage.months} mo` : 'Dukascopy · no data'));
     const symList = h('div', { class: 'dm-symbols' }, listed.map(x => h('button', {
       class: 'dm-sym' + (x.symbol === this.symbol ? ' active' : ''), onclick: () => { this.symbol = x.symbol; this.render(); },
     }, h('b', null, x.symbol), h('small', null, symSub(x)))));
@@ -125,8 +125,49 @@ export class DataManager {
     const dukaSections = s.hasDukascopy ? [h('div', { class: 'dm-divider' }, 'Dukascopy'), download, csv, coverage] : [];
     this.body.replaceChildren(h('div', { class: 'dm' }, symList, h('div', { class: 'dm-main' },
       h('div', { class: 'dm-title' }, h('h3', null, `${s.symbol} — ${s.name}`), h('span', { class: 'muted' }, `${s.market} · quote ${s.quote} · ${s.lotName}`)),
-      ...[sourceBox, tdSection, jobsSection, ...dukaSections].filter(Boolean))));
+      ...[this.renderFeedPicker(s), sourceBox, tdSection, jobsSection, ...dukaSections].filter(Boolean))));
     this.renderJobs(jobs);
+  }
+
+  renderFeedPicker(s) {
+    const exchange = h('select', {'aria-label':'Feed provider'},
+      ['', 'OANDA','PEPPERSTONE','FXCM','FOREXCOM','ICMARKETS','TVC','BITSTAMP','BINANCE'].map(x=>h('option',{value:x},x || 'All providers')));
+    const query = h('input',{value:s.tv?.split(':').slice(1).join(':') || s.symbol,placeholder:'Search a pair or EXCHANGE:SYMBOL','aria-label':'Feed search'});
+    const results = h('div', {class:'feed-results'});
+    const status = h('p',{class:'muted small','aria-live':'polite'});
+    const section = h('section',{class:'dm-section'},h('h4',null,'Live chart feed'),
+      h('p',null,`Selected: ${s.tv || 'No live feed selected'}`),
+      h('div',{class:'dm-row'},query,exchange),status,results);
+    let token=0;
+    const search = async (offset=0) => {
+      const id=++token;
+      if (!offset) results.replaceChildren();
+      status.textContent='Searching available feeds…';
+      try {
+        const list=await api(`/api/tv/search?q=${encodeURIComponent(query.value)}&exchange=${encodeURIComponent(exchange.value)}&symbol=${encodeURIComponent(s.symbol)}&offset=${offset}`);
+        if (id!==token || !section.isConnected) return;
+        results.querySelector('.feed-more')?.remove();
+        status.textContent=list.length ? 'Choose the feed to use for this symbol. The selection is saved.' : 'No more matching feeds. Try a different provider or symbol.';
+        for (const m of list) {
+          const button=h('button',{class:'btn small',disabled:m.id===s.tv || m.compatible===false,onclick:async()=>{
+            button.disabled=true; status.textContent=`Checking ${m.id} candles…`;
+            try {
+              await api('/api/tv/feed',{method:'POST',body:{symbol:s.symbol,feed:m.id}});
+              invalidateMinutes(s.symbol); await refreshCoverage();
+              await Promise.all(this.app.views.filter(v=>v.symbol===s.symbol).map(v=>v.load()));
+              if (this.app.tester) {this.app.tester.result=null;this.app.tester.syncTarget();}
+              this.app.watchlist?.refreshHistorical();
+              toast(`${s.symbol} now uses ${m.id}`); await this.render();
+            } catch(e) {status.textContent=e.message;button.disabled=false;}
+          }},m.id===s.tv?'Selected':m.compatible===false?'Different instrument':'Use feed');
+          results.append(h('div',{class:'feed-row'},h('div',null,h('b',null,m.id),h('small',null,m.description || m.symbol)),button));
+        }
+        if(list.length) results.append(h('button',{class:'btn small feed-more',onclick:()=>search(offset+list.length)},'Load more feeds'));
+      } catch(e) {if(id===token)status.textContent=e.message;}
+    };
+    section.querySelector('.dm-row').append(h('button',{class:'btn',onclick:()=>search()},'Find feeds'),h('button',{class:'btn',onclick:()=>{this.modal.hidden=true;this.app.openSymbolSearch('open',exchange.value ? `${exchange.value}:` : '');}},'Browse all pairs'));
+    query.addEventListener('keydown',e=>{if(e.key==='Enter')search();});
+    return section;
   }
 
   async estimate(from, to) {

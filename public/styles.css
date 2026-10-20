@@ -1100,3 +1100,7 @@ body { letter-spacing: normal; font-feature-settings: normal; }
 input[type=number], input[type=text], input[type=search], input[type=date], input[type=datetime-local], input[type=month], select, textarea { border-color: var(--input-border); }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .chip.active { background: var(--accent); border-color: var(--accent); }
+/* Feed selection keeps exchange identity visible alongside the instrument. */
+.feed-results { display:grid; gap:6px; }
+.feed-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:10px 12px; border:1px solid var(--border); border-radius:6px; }
+.feed-row small { display:block; opacity:.65; margin-top:3px; }

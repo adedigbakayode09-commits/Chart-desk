@@ -14,7 +14,8 @@ import { assistantStatus, assistantTurn } from './assistant.js';
 import { startAlertRunner, alertEvents, clearAlertLog, testWebhook } from './alertrunner.js';
 import { economicCalendar } from './calendar.js';
 import { streamHandler } from './tdstream.js';
-import { tvGetBars, tvFillBars, tvRangeOhlc, tvStatus, tvSearch, tvEntry } from './tvsource.js';
+import { tvGetBars, tvFillBars, tvRangeOhlc, tvStatus, tvSearch, tvEntry, tvDescribe, tvInvalidate } from './tvsource.js';
+import { createFeedManager, compatibleFeed } from './tvfeeds.js';
 import {
   sourceOf, sourcesOf, setSource, keyConfigured as tdKeyConfigured, tdGetBars, tdRangeOhlc, tdFillBars,
   tdStatus, tdRange, tdClearCache, tdCoverage, tdLookup,
@@ -28,6 +29,8 @@ if (fs.existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 // stocks / ETFs added from symbol search
 for (const e of (await kvGet('tdSymbols')) || []) addSymbol(e);
 for (const e of (await kvGet('tvSymbols')) || []) addSymbol(e); // TradingView markets added from search
+const feeds = createFeedManager({catalog:bySymbol, describe:tvDescribe, load:()=>kvGet('tvFeeds'), save:v=>kvPut('tvFeeds',v), invalidate:tvInvalidate});
+await feeds.init();
 
 const PORT = Number(process.env.PORT || 5178);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -78,7 +81,16 @@ const routes = [
   // Real candles at the finest cached resolution inside [from, to) — Twelve Data replay fills.
   ['GET', /^\/api\/fill-bars$/, async (q) => (sourceOf(q.symbol) === 'tradingview' ? tvFillBars : tdFillBars)(q.symbol, Number(q.from), Number(q.to))],
   ['GET', /^\/api\/tv\/status$/, async () => tvStatus],
-  ['GET', /^\/api\/tv\/search$/, async (q) => tvSearch(q.q, q.type)],
+  ['GET', /^\/api\/tv\/search$/, async (q) => {
+    const list = await tvSearch(q.q, q.type, q.exchange, q.offset);
+    return q.symbol && bySymbol[q.symbol] ? list.map(m=>({...m,compatible:compatibleFeed(bySymbol[q.symbol],m.id)})) : list;
+  }],
+  ['POST', /^\/api\/tv\/feed$/, async (q, body) => {
+    const {symbol, feed} = JSON.parse(body.toString('utf8'));
+    const result = await feeds.set(symbol,feed);
+    await setSource(symbol,'tradingview');
+    return result;
+  }],
   ['POST', /^\/api\/symbols\/tv$/, async (q, body) => {
     const m = JSON.parse(body.toString('utf8'));
     if (bySymbol[String(m.id || '').toUpperCase()]) return { symbol: String(m.id).toUpperCase() };

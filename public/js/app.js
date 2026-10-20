@@ -1005,6 +1005,7 @@ class App {
     inp.value = initial;
     this.symSel = 0;
     this.symFilter = this.symFilter || 'all';
+    this.symExchange = initial.includes(':') ? initial.split(':')[0].toUpperCase() : (this.symExchange || '');
     this.renderSymList();
     inp.focus();
   }
@@ -1012,13 +1013,15 @@ class App {
     const q = $('#symInput').value.trim().toUpperCase();
     const markets = ['all', ...new Set(SYMBOLS.map(s => s.market))];
     $('#symFilters').replaceChildren(...markets.map(m => h('button', { class: 'chip' + (this.symFilter === m ? ' active' : ''), onclick: () => { this.symFilter = m; this.renderSymList(); $('#symInput').focus(); } }, m === 'all' ? 'All' : m)));
-    const items = SYMBOLS.filter(s => (this.symFilter === 'all' || s.market === this.symFilter) && (!q || s.symbol.includes(q) || s.name.toUpperCase().includes(q)));
+    const exchange=h('select',{'aria-label':'Symbol feed provider',onchange:()=>{this.symExchange=exchange.value;this.renderSymList();}},
+      ['', 'OANDA','PEPPERSTONE','FXCM','FOREXCOM','ICMARKETS','TVC','BITSTAMP','BINANCE'].map(x=>h('option',{value:x,selected:x===(this.symExchange || '')},x || 'All providers')));
+    $('#symFilters').prepend(exchange);
+    const items = SYMBOLS.filter(s => (!this.symExchange || s.tv?.startsWith(`${this.symExchange}:`) || (this.symExchange==='BINANCE' && s.provider==='binance')) && (this.symFilter === 'all' || s.market === this.symFilter) && (!q || s.symbol.includes(q) || s.name.toUpperCase().includes(q)));
     this.symItems = items;
     this.symSel = clamp(this.symSel, 0, Math.max(0, items.length - 1));
-    this.renderBinanceMatches(q, items);
-    setTimeout(() => this.renderTdLookup(q), 0);
+    if (!this.symExchange) { this.renderBinanceMatches(q, items); setTimeout(() => this.renderTdLookup(q), 0); }
     clearTimeout(this.tvSearchTimer);
-    if (q.length >= 2) this.tvSearchTimer = setTimeout(() => this.renderTvMatches(q), 250);
+    if (q.length >= 2 || this.symExchange) this.tvSearchTimer = setTimeout(() => this.renderTvMatches(q), 250);
     $('#symList').replaceChildren(...(items.length ? items.map((s, i) => h('div', {
       class: 'dlg-item' + (i === this.symSel ? ' sel' : ''), onclick: () => this.chooseSymbol(s.symbol),
       onmouseenter: () => { this.symSel = i; $$('#symList .dlg-item').forEach((r, j) => r.classList.toggle('sel', j === i)); },
@@ -1030,16 +1033,22 @@ class App {
       : [h('div', { class: 'dlg-empty' }, 'No symbols match your search')]));
   }
   /** Symbol search: every market on TradingView (stocks, crypto, futures, indices, forex, bonds…); a pick is added and charted. */
-  async renderTvMatches(q) {
+  async renderTvMatches(q, offset=0) {
+    const exchange=this.symExchange || '', filter=this.symFilter;
+    const type=({'Forex':'forex','Crypto':'crypto','Stocks':'stock','ETFs':'fund','Indices':'index','Futures':'futures','Bonds':'bond'})[filter] || '';
     let list;
-    try { list = await api(`/api/tv/search?q=${encodeURIComponent(q)}`); } catch { return; }
-    if ($('#symInput').value.trim().toUpperCase() !== q || $('#symList .tv-sec')) return;
+    try { list = await api(`/api/tv/search?q=${encodeURIComponent(q)}&exchange=${encodeURIComponent(exchange)}&type=${type}&offset=${offset}`); }
+    catch(e) {if($('#symInput').value.trim().toUpperCase()===q)$('#symList').append(h('div',{class:'dlg-empty'},`Feed search: ${e.message}`));return;}
+    if ($('#symInput').value.trim().toUpperCase() !== q || (this.symExchange || '')!==exchange || this.symFilter!==filter || (!offset && $('#symList .tv-sec'))) return;
     const have = new Set(SYMBOLS.map(s => s.symbol));
-    const rows = list.filter(m => !have.has(m.id)).slice(0, 30);
-    if (!rows.length) return;
+    const seen=new Set([...$('#symList').querySelectorAll('[data-feed]')].map(e=>e.dataset.feed));
+    const rows = list.filter(m => !have.has(m.id) && !seen.has(m.id));
+    $('#symList .tv-more')?.remove();
+    if (!list.length) {if(offset)$('#symList').append(h('div',{class:'dlg-empty'},'No more matching pairs'));return;}
     $$('#symList .dlg-empty').forEach(x => x.remove());
-    $('#symList').append(h('div', { class: 'dlg-section tv-sec' }, 'All markets on TradingView'), ...rows.map(m => {
-      const row = h('div', { class: 'dlg-item', onclick: async () => {
+    if (!offset) $('#symList').append(h('div', { class: 'dlg-section tv-sec' }, exchange ? `${exchange} · available markets` : 'All available market feeds'));
+    $('#symList').append(...rows.map(m => {
+      const row = h('div', { class: 'dlg-item', 'data-feed':m.id, onclick: async () => {
         row.querySelector('.ds').textContent = 'Adding…';
         try {
           const r = await api('/api/symbols/tv', { method: 'POST', body: m });
@@ -1049,7 +1058,7 @@ class App {
       } }, coin(m.symbol || m.id), h('span', { class: 'nm' }, m.symbol), h('span', { class: 'ds' }, `${m.description || ''}`),
         h('span', { class: 'tag' }, `${m.type || 'market'} · ${m.exchange}`), h('span', { class: 'cov live' }, 'TradingView'));
       return row;
-    }));
+    }),h('button',{class:'btn small tv-more',onclick:()=>this.renderTvMatches(q,offset+list.length)},'Load more pairs'));
   }
   /** Symbol search: look a ticker up on Twelve Data (US stocks, ETFs…) and add it to the symbol list. */
   renderTdLookup(q) {

@@ -5,7 +5,7 @@
 // TradingView's quote stream (about one update a second for gold) and are pushed to the app by server/tdstream.js.
 // Anonymous history is limited (about 5,000 bars per timeframe), so older dates belong to Twelve Data / Dukascopy.
 
-import { getCandles, watchQuotes } from '@mathieuc/tradingview/data';
+import { getCandles, getSymbolInfo, watchQuotes } from '@mathieuc/tradingview/data';
 import { bySymbol } from './catalog.js';
 
 export const tvSymbolOf = symbol => bySymbol[symbol]?.tv || null;
@@ -83,6 +83,7 @@ async function restart() {
   try {
     const w = await watchQuotes({ symbols: [...byTv.keys()], fields: ['lp', 'bid', 'ask'] }, {
       onData(tv, q, ch) {
+        if (gen !== generation) return;
         const sym = byTv.get(tv);
         const price = ch?.lp ?? ch?.bid ?? null;
         if (sym && price != null && Number.isFinite(q.lp ?? price)) sink(sym, q.lp ?? price, Date.now());
@@ -108,21 +109,34 @@ import { searchMarkets } from '@mathieuc/tradingview/data';
 const MARKET = { stock: 'Stocks', fund: 'ETFs', dr: 'Stocks', crypto: 'Crypto', forex: 'Forex', futures: 'Futures', index: 'Indices', bond: 'Bonds', economic: 'Economy', cfd: 'CFDs', spot: 'Commodities', commodity: 'Commodities' };
 
 /** Markets matching a text (all of TradingView: stocks, crypto, futures, indices, forex, bonds…). */
-export async function tvSearch(q, type) {
-  const list = await searchMarkets(String(q || '').slice(0, 40), type ? { type } : undefined);
-  return list.slice(0, 40).map(m => ({ id: m.id, symbol: m.symbol, exchange: m.exchange, description: m.description, type: m.type, currency: m.currency, country: m.country }));
+export async function tvSearch(q, type, exchange, offset = 0) {
+  const list = await searchMarkets(String(q || '').slice(0, 80), { ...(type ? {type} : {}), ...(exchange ? {exchange:String(exchange).slice(0,40)} : {}), offset:Math.max(0,Math.min(100000,Number(offset)||0)) });
+  return list.map(m => ({ id: m.id, symbol: m.symbol, exchange: m.exchange, description: m.description, type: m.type, currency: m.currency, country: m.country }));
+}
+export function tvInvalidate(symbol) {
+  for (const key of cache.keys()) if (key.startsWith(`${symbol}|`)) cache.delete(key);
+  if (wanted.has(symbol)) {generation++;schedule();}
+}
+export async function tvDescribe(feed) {
+  const id = String(feed || '').toUpperCase().trim();
+  if (!/^[A-Z0-9_.!-]+:[A-Z0-9_.!\-/]+$/.test(id)) throw Object.assign(new Error('Use a qualified feed, e.g. OANDA:XAUUSD'), {status:400});
+  const info = await getSymbolInfo({symbol:id,timeoutMs:TIMEOUT});
+  const bars = await getCandles({symbol:id,timeframe:info.has_intraday ? '1' : 'D',count:2,timeoutMs:TIMEOUT});
+  if (!bars.length) throw Object.assign(new Error(`No candles available for ${id}`), {status:404});
+  const mintick = info.minmov / info.pricescale;
+  if (!(mintick > 0)) throw new Error(`Missing price tick for ${id}`);
+  return {tv:id, tvDescription:info.description || id, tvPine:{mintick, ...(id === 'PEPPERSTONE:XAUUSD' ? {qtyStep:0.1} : {})}};
 }
 /** Catalog entry for a TradingView market; price precision taken from its latest candles. */
 export async function tvEntry(m) {
   const id = String(m.id || '').toUpperCase();
   if (!/^[A-Z0-9_.!-]+:[A-Z0-9_.!\-/]+$/.test(id)) throw Object.assign(new Error('Unknown TradingView symbol'), { status: 400 });
-  const c = await getCandles({ symbol: id, timeframe: 'D', count: 5, timeoutMs: TIMEOUT });
-  if (!c.length) throw Object.assign(new Error(`TradingView has no candles for ${id}`), { status: 404 });
-  const dec = Math.min(8, Math.max(...c.map(x => (String(x.close).split('.')[1] || '').length), 0));
+  const feed = await tvDescribe(id);
+  const dec = Math.min(8, Math.max(0, Math.ceil(-Math.log10(feed.tvPine.mintick))));
   const type = String(m.type || '').toLowerCase(), crypto = type === 'crypto';
   return {
     symbol: id, name: m.description || id, market: MARKET[type] || 'Other', type: crypto ? 'crypto' : type === 'forex' ? 'forex' : type === 'index' ? 'index' : 'stock',
-    provider: 'tradingview', tv: id, session: crypto ? 'crypto' : 'fx', base: id.split(':')[1], quote: m.currency || 'USD',
+    provider: 'tradingview', ...feed, session: crypto ? 'crypto' : 'fx', base: id.split(':')[1], quote: m.currency || 'USD',
     precision: Math.max(dec, 2), tickSize: 10 ** -Math.max(dec, 2), pip: 10 ** -Math.max(dec, 2), point: 10 ** Math.max(dec, 2),
     contractSize: 1, lotName: 'unit', defaultSpread: 0, commissionPerLot: 0, commissionPct: 0, range: [0, 1e9], custom: true, exchange: m.exchange,
   };
