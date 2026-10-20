@@ -1,0 +1,12 @@
+# ChartDesk in Docker Desktop: `docker compose up -d --build`, then open http://127.0.0.1:5178
+# Restarts with Docker Desktop. Your data/ (settings, alerts, cached candles) and .env (API keys) stay on this PC.
+services:
+  chartdesk:
+    build: .
+    container_name: chartdesk
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5178:5178"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
