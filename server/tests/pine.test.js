@@ -24,19 +24,26 @@ const same = (a, b, label) => {
   }
 };
 const plotOf = (src, title, inputs) => runPine(src, D, inputs).plots.find(p => p.title === title).values;
+const pineEma = (a, n) => {
+  let prev = null;
+  return a.map(x => {
+    if (x != null) prev = prev == null ? x : 2 / (n + 1) * x + (1 - 2 / (n + 1)) * prev;
+    return prev;
+  });
+};
 
-test('ta.sma / ema / rsi match the built-in indicators', () => {
+test('ta.sma / rsi match built-ins; EMA follows its first-value recurrence', () => {
   const src = `//@version=6
 indicator("t")
 plot(ta.sma(close, 20), "sma")
 plot(ta.ema(close, 20), "ema")
 plot(ta.rsi(close, 14), "rsi")`;
   same(plotOf(src, 'sma'), I.sma(D.close, 20), 'sma');
-  same(plotOf(src, 'ema'), I.ema(D.close, 20), 'ema');
+  same(plotOf(src, 'ema'), pineEma(D.close, 20), 'ema');
   same(plotOf(src, 'rsi'), I.rsi(D.close, 14), 'rsi');
 });
 
-test('tuples: ta.macd and ta.bb match the built-in indicators', () => {
+test('tuples: MACD uses first-value EMAs and Bollinger bands match the built-in indicator', () => {
   const src = `//@version=6
 indicator("t")
 [m, s, h] = ta.macd(close, 12, 26, 9)
@@ -45,10 +52,35 @@ plot(m, "macd")
 plot(s, "signal")
 plot(up, "upper")`;
   const r = runPine(src, D);
-  const ref = I.macd(D.close, 12, 26, 9), bb = I.bollinger(D.close, 20, 2);
+  const fast = pineEma(D.close, 12), slow = pineEma(D.close, 26);
+  const line = fast.map((v, i) => v - slow[i]);
+  const ref = {line, signal: pineEma(line, 9)}, bb = I.bollinger(D.close, 20, 2);
   same(r.plots[0].values, ref.line, 'macd');
   same(r.plots[1].values, ref.signal, 'signal');
   same(r.plots[2].values, bb.upper, 'bb upper');
+});
+
+test('EMA is available from the first valid source; RMA still waits for its SMA seed', () => {
+  const r = runPine(`//@version=6
+indicator("seeds")
+plot(ta.ema(close, 3), "EMA")
+plot(ta.rma(close, 3), "RMA")`, {...D, close:[10,14,18,22], time:D.time.slice(0,4)});
+  assert.deepEqual(r.plots[0].values, [10,12,15,18.5]);
+  assert.deepEqual(r.plots[1].values, [null,null,14,50/3]);
+});
+
+test('higher-timeframe lookbacks use prior provider candles without leaking its unfinished final candle', () => {
+  const columns = rows => Object.fromEntries(['time','open','high','low','close','volume'].map((c,j)=>[c,rows.map(r=>r[j])]));
+  const d = {...columns(Array.from({length:8},(_,k)=>[7200+k*900,120+k,120+k,120+k,120+k,1])),tf:900,session:'utc'};
+  d.security = {'60':columns([[0,100,100,100,100,1],[3600,110,110,110,110,1],[7200,130,130,130,130,1],[10800,999,999,999,999,1],[14400,9999,9999,9999,9999,1]])};
+  const r = runPine(`//@version=6
+indicator("context")
+previous() =>
+    e = ta.ema(close,3)
+    e[1]
+plot(request.security(syminfo.tickerid,"60",previous(),lookahead=barmerge.lookahead_on))`,d);
+  assert.deepEqual(r.plots[0].values,[105,105,105,105,117.5,117.5,117.5,117.5]);
+  assert.deepEqual(r.securityRequests,['60']);
 });
 
 test('inputs, switch, var, if-expressions, arrays, user types and methods', () => {
@@ -84,7 +116,7 @@ plot(dir, "dir")`;
   assert.equal(r.meta.overlay, true);
   assert.deepEqual(r.meta.inputs.map(x => [x.name, x.kind]), [['Length', 'int'], ['Kind', 'string']]);
   assert.deepEqual(r.meta.inputs[1].options, ['SMA', 'EMA']);
-  same(r.plots[0].values, I.ema(D.close, 5), 'switch ema');
+  same(r.plots[0].values, pineEma(D.close, 5), 'switch ema');
   assert.equal(r.plots[1].values[D.close.length - 1], D.close.length);
   const n = D.close.length;
   assert.ok(Math.abs(r.plots[2].values[n - 1] - (D.close[n - 1] + D.close[n - 2] + D.close[n - 3]) / 3) < 1e-9);

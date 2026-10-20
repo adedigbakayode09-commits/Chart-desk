@@ -219,7 +219,7 @@ self.onmessage = e => {
           while (sessions.size > 6) sessions.delete(sessions.keys().next().value);
         }
       }
-      self.postMessage({ id, lang: 'pine', meta: r.meta, plots: r.plots, hlines: r.hlines, shapes: r.shapes, drawings: r.drawings, fills: r.fills, bgcolors: r.bgcolors, barcolors: r.barcolors, alerts: r.alerts, warnings: r.warnings, strategy: r.strategy || null, logs: r.logs || [], profile: r.profile || null });
+      self.postMessage({ id, lang: 'pine', meta: r.meta, securityRequests: r.securityRequests, plots: r.plots, hlines: r.hlines, shapes: r.shapes, drawings: r.drawings, fills: r.fills, bgcolors: r.bgcolors, barcolors: r.barcolors, alerts: r.alerts, warnings: r.warnings, strategy: r.strategy || null, logs: r.logs || [], profile: r.profile || null });
     } catch (err) {
       self.postMessage({ id, lang: 'pine', error: (err && err.message) || String(err), line: err && err.line ? err.line : null });
     }
@@ -321,7 +321,7 @@ export async function runScript(code, bars, inputs = {}, ctx = {}) {
     const id = ++seq;
     const timer = setTimeout(() => { pending.delete(id); resolve({ id, error: `The script ran longer than ${TIME_LIMIT / 1000} s and was stopped.` }); resetWorker('Script engine restarted after a timeout.'); }, TIME_LIMIT);
     pending.set(id, { resolve, timer });
-    const data = { time: [], open: [], high: [], low: [], close: [], volume: [], tf: ctx.tf, symbol: ctx.symbol, mintick: ctx.mintick, session: ctx.session };
+    const data = { time: [], open: [], high: [], low: [], close: [], volume: [], tf: ctx.tf, symbol: ctx.symbol, mintick: ctx.mintick, session: ctx.session, security: ctx.security };
     for (const b of bars) { data.time.push(b.time); data.open.push(b.open); data.high.push(b.high); data.low.push(b.low); data.close.push(b.close); data.volume.push(b.volume || 0); }
     getWorker().postMessage({ id, code, data, inputs, libs, key: ctx.profile ? null : ctx.key, strat: ctx.strategy || null, profile: !!ctx.profile });
   });

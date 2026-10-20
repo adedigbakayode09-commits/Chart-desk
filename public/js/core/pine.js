@@ -730,7 +730,12 @@ export function runPine(src, data, inputs = {}, opts = {}) {
   // --- stateful ta implementations (called once per bar per call site)
   const TA = {
     sma(st, src, len) { len = LEN(len); const a = push(st, 'w', num(src), len); return a.length < len || a.some(isNa) ? NA : a.reduce((s, v) => s + v, 0) / len; },
-    ema(st, src, len) { len = LEN(len); return emaLike(st, num(src), len, 2 / (len + 1)); },
+    ema(st, src, len) {
+      len = LEN(len); const v = num(src);
+      // EMA starts from the first non-na source; Wilder's RMA below uses an SMA seed.
+      if (!isNa(v)) st.prev = isNa(st.prev) ? v : 2 / (len + 1) * v + (1 - 2 / (len + 1)) * st.prev;
+      return st.prev ?? NA;
+    },
     rma(st, src, len) { len = LEN(len); return emaLike(st, num(src), len, 1 / len); },
     wma(st, src, len) { len = LEN(len); const a = push(st, 'w', num(src), len); if (a.length < len || a.some(isNa)) return NA; let s = 0; a.forEach((v, j) => { s += v * (j + 1); }); return s / (len * (len + 1) / 2); },
     swma(st, src) { const a = push(st, 'w', num(src), 4); return a.length < 4 ? NA : (a[0] + 2 * a[1] + 2 * a[2] + a[3]) / 6; },
@@ -1610,6 +1615,26 @@ export function runPine(src, data, inputs = {}, opts = {}) {
       }
       map[k] = h.close.length - 1;
     }
+    // The requested context can have history before the first chart candle.
+    // This matters for daily lookbacks on a short intraday test.
+    const extra = data.security?.[key];
+    if (extra?.time?.length && n) {
+      const columns = ['time', 'open', 'high', 'low', 'close', 'volume'];
+      const rows = new Map();
+      const finalBucket = tfBucket(data.time[n - 1], t, session);
+      for (let k = 0; k < extra.time.length; k++) {
+        const bucket = tfBucket(extra.time[k], t, session);
+        if (bucket < finalBucket) rows.set(bucket, columns.map(c => extra[c]?.[k] ?? 0));
+      }
+      for (let k = 0; k < h.time.length; k++) {
+        const bucket = tfBucket(h.time[k], t, session);
+        if (!rows.has(bucket)) rows.set(bucket, columns.map(c => h[c][k]));
+      }
+      const sorted = [...rows].sort((a, b) => a[0] - b[0]);
+      const indices = new Map(sorted.map(([bucket], k) => [bucket, k]));
+      for (let c = 0; c < columns.length; c++) h[columns[c]] = sorted.map(([, row]) => row[c]);
+      for (let k = 0; k < n; k++) map[k] = indices.get(tfBucket(data.time[k], t, session));
+    }
     const rec = new Map();
     try { runPine(src, h, inputs, { ...opts, capture: rec, depth: (opts.depth || 0) + 1 }); }
     catch (e) { if (!/did not plot/.test(e.message)) warnings.add(`request.security() on ${key}: ${e.message}`); }
@@ -1977,7 +2002,7 @@ export function runPine(src, data, inputs = {}, opts = {}) {
   const drawCount = Object.values(drawings).reduce((a, l) => a + l.length, 0);
   if (!strat && !outPlots.length && !marks.length && !hlines.size && !drawCount && !outFills.length && !outBg.length && !outBarColors) throw new PineError('The script did not plot or draw anything — add a plot(…), plotshape(…) or drawing call', null);
   return {
-    meta, plots: outPlots, hlines: [...hlines.values()].map(h => ({ ...h, color: css(h.color) })),
+    meta, securityRequests: [...secCache.keys()], plots: outPlots, hlines: [...hlines.values()].map(h => ({ ...h, color: css(h.color) })),
     shapes: marks.slice(-3000), drawings, fills: outFills, bgcolors: outBg, barcolors: outBarColors, alerts: alertEvents.slice(), warnings: [...warnings],
     strategy: report, logs: logs.slice(-500),
     profile: prof ? [...prof.entries()].map(([line, ms]) => ({ line, ms })).sort((a, b) => b.ms - a.ms) : null,

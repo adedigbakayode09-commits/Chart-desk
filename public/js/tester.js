@@ -1,7 +1,7 @@
 // Strategy Tester panel: configure a built-in strategy, run it on real history, inspect the results.
 
 import { h, icon, kv, toast, fmtUsd, fmtPrice, fmtDateTime, fmtDuration, fmtDate, parseUtcInput, formFields, ACCENT } from './util.js';
-import { fetchRange, spec, tfLabel, tfSec, precisionOf } from './data.js';
+import { fetchBars, fetchRange, spec, tfLabel, tfSec, precisionOf } from './data.js';
 import { STRATEGIES, DEFAULT_SETTINGS, runBacktest, validateSettings, computeMetrics } from './core/backtest.js';
 import { listScripts, getScript, runScript } from './scripts.js';
 import { canTrade, EXECUTION_NOTES } from './core/broker.js';
@@ -166,7 +166,7 @@ export class Tester {
       h('div', { class: 'tester-form' },
         h('div', { class: 'tester-target' }, h('b', null, `${view.symbol} · ${tfLabel(view.cfg.tf)}`), h('span', { class: 'muted' }, 'active chart')),
         h('label', { class: 'field wide' }, h('span', null, 'Strategy'), this.strategySelect()),
-        h('p', { class: 'muted small' }, 'Pine simulation: market orders fill at the next open, or after execution at the signal close when the script requests it. Compare using the same symbol feed, timeframe, dates, inputs and properties. Higher-timeframe indicators use the history loaded for this test; starting later changes their warm-up.',
+        h('p', { class: 'muted small' }, 'Pine simulation: market orders fill at the next open, or after execution at the signal close when the script requests it. Compare using the same symbol feed, timeframe, dates, inputs and properties. Higher-timeframe requests load up to 500 preceding provider candles for their lookbacks.',
           ' ', h('button', { class: 'link', onclick: () => { this.app.showPanel('scripts'); this.app.scriptEditor.select(sc.id); } }, 'Edit script')),
         inputs.length ? h('div', { class: 'cs-heading' }, 'Inputs') : null, this.paramsForm.el,
         h('div', { class: 'cs-heading' }, 'Properties'), this.form.el,
@@ -201,8 +201,26 @@ export class Tester {
       if (bars.length < 20) throw new Error(`Only ${bars.length} bars in that range — widen the dates or load more history.`);
       this.setProgress(0.6, `Running ${sc.name} on ${bars.length.toLocaleString()} bars…`);
       const t0 = performance.now();
-      const res = await runScript(sc.code, bars, inputs, { ...view.scriptCtx(), strategy: Object.fromEntries(Object.entries(props).filter(([, x]) => x != null && x !== '')) });
+      const ctx = { ...view.scriptCtx(), strategy: Object.fromEntries(Object.entries(props).filter(([, x]) => x != null && x !== '')) };
+      let res = await runScript(sc.code, bars, inputs, ctx);
       if (res.error) throw new Error(`${res.line ? `Line ${res.line}: ` : ''}${res.error}`);
+      const security = {}, historyNotes = [];
+      const intervals = { '1':'1m', '3':'3m', '5':'5m', '15':'15m', '30':'30m', '60':'1h', '120':'2h', '240':'4h', '1D':'1d', '1W':'1w', '1M':'1M' };
+      for (const key of res.securityRequests || []) {
+        const interval = intervals[key];
+        if (!interval) { historyNotes.push(`No provider interval for ${key}; calculated from chart candles.`); continue; }
+        this.setProgress(0.65, `Loading ${tfLabel(interval)} context and earlier history…`);
+        const prior = await fetchBars(view.symbol, interval, {before: bars[0].start ?? bars[0].time, limit: 500});
+        const current = await fetchRange(view.symbol, interval, bars[0].start ?? bars[0].time, to);
+        const rows = [...new Map([...prior.bars, ...current].map(b => [b.time, b])).values()].sort((a,b) => a.time-b.time);
+        if (!rows.length) { historyNotes.push(`No ${key} provider history; calculated from chart candles.`); continue; }
+        security[key] = Object.fromEntries(['time','open','high','low','close','volume'].map(c => [c, rows.map(b => b[c] ?? 0)]));
+        historyNotes.push(`${key}: ${prior.bars.length} preceding candles`);
+      }
+      if (Object.keys(security).length) {
+        res = await runScript(sc.code, bars, inputs, {...ctx, security});
+        if (res.error) throw new Error(`${res.line ? `Line ${res.line}: ` : ''}${res.error}`);
+      }
       const rep = res.strategy;
       if (!rep) throw new Error('The script ran but has no strategy(…) declaration');
       const last = bars[bars.length - 1];
@@ -214,7 +232,9 @@ export class Tester {
         trades, open: rep.open, openProfit: rep.openProfit, equity: rep.equity, rejected: [], spreadInfo: null, intrabar: 'ohlc', pine: true,
         metrics: computeMetrics(trades, rep.equity, rep.cfg.initial, bars, tfSec(tf)),
         symbol: view.symbol, tf, from: bars[0].time, to: last.time, bars: bars.length, strategy: sc.name, params: inputs,
-        note: (res.warnings || []).slice(0, 3).join(' '),
+        note: [...(res.warnings || []), ...historyNotes].join(' '),
+        feed: view.spec?.provider === 'tradingview' ? view.spec.tv : view.spec?.provider,
+        diagnostics: {engine:'ChartDesk Pine', symbol:view.symbol, feed:view.spec?.provider === 'tradingview' ? view.spec.tv : view.spec?.provider, timeframe:tf, inputs, properties:rep.cfg, bars, security, trades, open:rep.open, equity:rep.equity, events:rep.events, plots:res.plots, warnings:res.warnings},
       };
       this.result = r;
       this.tab = 'overview';
@@ -321,6 +341,10 @@ export class Tester {
     const tabs = h('div', { class: 'subtabs' }, tab('overview', 'Overview'), tab('perf', 'Performance summary'), tab('trades', `List of trades (${r.trades.length})`),
       h('div', { class: 'spacer' }),
       h('span', { class: 'muted small' }, `${r.strategy} · ${r.symbol} ${tfLabel(r.tf)} · ${fmtDate(r.from)} → ${fmtDate(r.to)} · ${r.bars.toLocaleString()} bars · fills: ${r.pine ? 'Pine broker emulator (bar OHLC)' : r.intrabar === 'm1' ? '1-minute data' : 'bar OHLC'}`),
+      ...(r.pine ? [h('span', {class:'muted small'}, r.feed || ''), h('button', {class:'btn small', onclick: () => {
+        const url = URL.createObjectURL(new Blob([JSON.stringify(r.diagnostics)], {type:'application/json'}));
+        const a = document.createElement('a'); a.href=url; a.download=`ChartDesk-${r.symbol}-${r.tf}-backtest.json`; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+      }}, 'Export backtest')] : []),
       h('button', { class: 'btn small', onclick: () => { this.app.activeView.setMarkers(r.trades, 'tester'); toast('Trades shown on the active chart'); } }, 'Show on chart'),
       h('button', { class: 'btn small', onclick: () => { this.app.activeView.setMarkers([], null); } }, 'Clear markers'));
     let body;
