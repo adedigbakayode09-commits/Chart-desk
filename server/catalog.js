@@ -25,8 +25,8 @@ export const CATALOG = [
   {
     symbol: 'XAUUSD', name: 'Gold / US Dollar', market: 'Precious Metals', type: 'metal', provider: 'dukascopy', session: 'fx',
     base: 'XAU', quote: 'USD', dk: 'xauusd', s3: 'XAUUSD', td: 'XAU/USD', point: 1000, precision: 3, tickSize: 0.001, pip: 0.1,
-    // Pepperstone feed pricescale=100/minmov=1; Pine trade quantities use 0.1 oz steps.
-    tvPine: { mintick: 0.01, qtyStep: 0.1 },
+    // OANDA feed pricescale=1000/minmov=1; no Pepperstone-specific quantity step.
+    tvPine: { mintick: 0.001 },
     contractSize: 100, lotName: 'lot (100 oz)', defaultSpread: 0.3, commissionPerLot: 7, range: [200, 20000],
   },
   {
@@ -95,7 +95,7 @@ for (const s of CATALOG) {
 }
 
 // TradingView feeds (unofficial, anonymous — see server/tvsource.js): Pepperstone's prices for the CFDs and forex.
-const TV_FEED = { XAUUSD: 'PEPPERSTONE:XAUUSD', XAGUSD: 'PEPPERSTONE:XAGUSD', US500: 'PEPPERSTONE:US500', US30: 'PEPPERSTONE:US30', NAS100: 'PEPPERSTONE:NAS100', BTCUSD: 'BITSTAMP:BTCUSD', ETHUSD: 'BITSTAMP:ETHUSD' };
+const TV_FEED = { XAUUSD: 'OANDA:XAUUSD', XAGUSD: 'PEPPERSTONE:XAGUSD', US500: 'PEPPERSTONE:US500', US30: 'PEPPERSTONE:US30', NAS100: 'PEPPERSTONE:NAS100', BTCUSD: 'BITSTAMP:BTCUSD', ETHUSD: 'BITSTAMP:ETHUSD' };
 for (const s of CATALOG) {
   if (TV_FEED[s.symbol]) s.tv = TV_FEED[s.symbol];
   else if (s.type === 'forex') s.tv = `PEPPERSTONE:${s.symbol}`;
