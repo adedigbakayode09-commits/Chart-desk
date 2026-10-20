@@ -1,0 +1,23 @@
+{
+  "name": "chartdesk",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Charting, bar replay and backtesting with real Dukascopy and Binance market data.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test \"server/tests/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@aws-sdk/client-s3": "^3.1150.0",
+    "@mathieuc/tradingview": "^4.0.0",
+    "@napi-rs/lzma": "^1.5.1",
+    "dukascopy-node": "^1.50.0"
+  }
+}

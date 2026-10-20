@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChartDesk</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand" title="ChartDesk">
+        <svg viewBox="0 0 28 28" width="24" height="24"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b82f6"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs><rect x="2" y="2" width="24" height="24" rx="7" fill="url(#bg)"/><path d="M7 18l4.5-5 3.5 3 6-7" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="brand-name">ChartDesk</span>
+      </div>
+      <button id="symbolBtn" class="tb-btn symbol-btn" title="Symbol search (start typing)">
+        <span class="ico"><svg viewBox="0 0 28 28"><circle cx="12.5" cy="12.5" r="6"/><path d="M17 17l5.5 5.5"/></svg></span><span id="symbolLabel">XAUUSD</span>
+      </button>
+      <button id="compareBtn" class="tb-btn icon-only" title="Compare with another symbol"><span class="ico"><svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="8"/><path d="M14 10v8M10 14h8"/></svg></span></button>
+      <div class="sep"></div>
+      <div id="tfFavs" class="tb-group"></div>
+      <button id="tfMore" class="tb-btn" title="All timeframes"><span class="caret"></span></button>
+      <div class="sep"></div>
+      <button id="typeBtn" class="tb-btn" title="Chart type"><span id="typeIcon" class="ico"></span><span class="caret"></span></button>
+      <div class="sep"></div>
+      <button id="indBtn" class="tb-btn" title="Indicators"><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 21c2 0 2-2 3-7s1-8 4-8M8 12h7M16 14l6 6M22 14l-6 6"/></svg></span><span class="lbl">Indicators</span></button>
+      <div class="sep"></div>
+      <button id="replayBtn" class="tb-btn" title="Bar Replay"><span class="ico"><svg viewBox="0 0 28 28"><path d="M6 14a8 8 0 1 0 2.4-5.7"/><path d="M6 5v4h4"/><path d="M12 10.5v7l5.5-3.5z" fill="currentColor"/></svg></span><span class="lbl">Replay</span></button>
+      <div class="sep"></div>
+      <button id="layoutBtn" class="tb-btn" title="Chart layout"><span id="layoutIcon" class="ico"></span><span class="caret"></span></button>
+      <button id="dataBtn" class="tb-btn" title="Market data: download & import"><span class="ico"><svg viewBox="0 0 28 28"><ellipse cx="14" cy="8" rx="8" ry="3"/><path d="M6 8v12c0 1.7 3.6 3 8 3s8-1.3 8-3V8M6 14c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="lbl">Data</span></button>
+      <div class="sep"></div>
+      <button id="askBtn" class="tb-btn ask-btn" title="Ask Claude to edit your chart"><span class="ico"><svg viewBox="0 0 28 28"><path d="M14 4l2.2 6.3L22.5 12.5l-6.3 2.2L14 21l-2.2-6.3L5.5 12.5l6.3-2.2z"/><path d="M21.5 4.5v3M20 6h3"/></svg></span><span class="lbl">Ask Claude</span></button>
+      <div class="spacer"></div>
+      <div class="tb-right">
+      <button id="styleBtn" class="tb-btn icon-only" title="Chart settings — candle colours, grid, background"><span class="ico"><svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="3"/><path d="M14 5v3M14 20v3M5 14h3M20 14h3M7.6 7.6l2.1 2.1M18.3 18.3l2.1 2.1M7.6 20.4l2.1-2.1M18.3 9.7l2.1-2.1"/></svg></span></button>
+      <button id="themeBtn" class="tb-btn icon-only" title="Toggle theme"></button>
+      <button id="fsBtn" class="tb-btn icon-only" title="Fullscreen"><span class="ico"><svg viewBox="0 0 28 28"><path d="M5 10V5h5M18 5h5v5M23 18v5h-5M10 23H5v-5"/></svg></span></button>
+      <button id="shotBtn" class="tb-btn icon-only" title="Snapshot of the active chart"><span class="ico"><svg viewBox="0 0 28 28"><path d="M5 9h4l2-3h6l2 3h4v13H5z"/><circle cx="14" cy="15" r="4"/></svg></span></button>
+      <button id="wlToggle" class="tb-btn icon-only" title="Show / hide watchlist (Alt+W)"><span class="ico"><svg viewBox="0 0 28 28"><rect x="5" y="6" width="18" height="16" rx="2.5"/><path d="M16 6v16M18.5 10.5h2M18.5 14h2M18.5 17.5h2"/></svg></span></button>
+      </div>
+    </header>
+
+    <main id="main">
+      <nav id="tools"></nav>
+
+      <section id="center">
+        <div id="chartArea">
+          <div id="views" class="views layout-1"></div>
+          <div id="replayBar" class="replay-bar" hidden></div>
+          <footer id="bottombar">
+            <div id="ranges" class="tb-group small"></div>
+            <div class="spacer"></div>
+            <span id="status" class="status"><i></i><span>Loading…</span></span>
+            <div class="sep"></div>
+            <span id="clock" class="clock"></span>
+            <div class="sep"></div>
+            <button class="bb-btn" data-scale="pct" title="Percent scale">%</button>
+            <button class="bb-btn" data-scale="log" title="Log scale">log</button>
+            <button class="bb-btn" data-scale="auto" title="Auto (fit data to screen)">auto</button>
+          </footer>
+        </div>
+        <section id="panel">
+          <div id="panelResizer" class="panel-resizer"></div>
+          <div id="panelTabs" class="panel-tabs"></div>
+          <div id="panelBody" class="panel-body">
+            <div id="panel-trading" class="panel-page"></div>
+            <div id="panel-tester" class="panel-page" hidden></div>
+            <div id="panel-journal" class="panel-page" hidden></div>
+            <div id="panel-alerts" class="panel-page" hidden></div>
+            <div id="panel-scripts" class="panel-page" hidden></div>
+            <div id="panel-screener" class="panel-page" hidden></div>
+            <div id="panel-calendar" class="panel-page" hidden></div>
+            <div id="panel-seasonals" class="panel-page" hidden></div>
+            <div id="panel-portfolio" class="panel-page" hidden></div>
+            <div id="panel-dom" class="panel-page" hidden></div>
+            <div id="panel-ideas" class="panel-page" hidden></div>
+          </div>
+        </section>
+      </section>
+
+      <aside id="assistant" class="assistant" hidden></aside>
+
+      <aside id="watchlist">
+        <div id="wlResizer" class="wl-resizer" title="Drag to resize"></div>
+        <div id="watchlistBody" class="wl-body"></div>
+        <div id="details" class="details"></div>
+      </aside>
+    </main>
+  </div>
+
+  <div id="typeMenu" class="menu" hidden></div>
+  <div id="tfMenu" class="menu" hidden></div>
+  <div id="layoutMenu" class="menu" hidden></div>
+  <div id="popover" class="popover" hidden></div>
+
+  <div id="symModal" class="modal" hidden>
+    <div class="dialog">
+      <div class="dlg-head"><span id="symTitle">Symbol Search</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div class="search"><span class="ico"><svg viewBox="0 0 28 28"><circle cx="12.5" cy="12.5" r="6"/><path d="M17 17l5.5 5.5"/></svg></span><input id="symInput" placeholder="Search, e.g. XAUUSD or gold" autocomplete="off" spellcheck="false"></div>
+      <div id="symFilters" class="chips"></div>
+      <div id="symList" class="dlg-list"></div>
+    </div>
+  </div>
+
+  <div id="indModal" class="modal" hidden>
+    <div class="dialog">
+      <div class="dlg-head"><span>Indicators</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div class="search"><span class="ico"><svg viewBox="0 0 28 28"><circle cx="12.5" cy="12.5" r="6"/><path d="M17 17l5.5 5.5"/></svg></span><input id="indInput" placeholder="Search" autocomplete="off" spellcheck="false"></div>
+      <div id="indList" class="dlg-list"></div>
+    </div>
+  </div>
+
+  <div id="sessionModal" class="modal" hidden>
+    <div class="dialog wide">
+      <div class="dlg-head"><span>Bar Replay sessions</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div id="sessionBody" class="dlg-body"></div>
+    </div>
+  </div>
+
+  <div id="dataModal" class="modal" hidden>
+    <div class="dialog xwide">
+      <div class="dlg-head"><span>Market data</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div id="dataBody" class="dlg-body"></div>
+    </div>
+  </div>
+
+  <div id="journalModal" class="modal" hidden>
+    <div class="dialog xwide">
+      <div class="dlg-head"><span id="journalTitle">Trade</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div id="journalBody" class="dlg-body"></div>
+    </div>
+  </div>
+
+  <div id="promptModal" class="modal" hidden>
+    <div class="dialog small">
+      <div class="dlg-head"><span id="promptTitle">Input</span></div>
+      <div id="promptBody" class="dlg-body"></div>
+    </div>
+  </div>
+
+  <div id="alertModal" class="modal" hidden>
+    <div class="dialog small">
+      <div class="dlg-head"><span id="alertTitle">Create alert</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div id="alertBody" class="dlg-body"></div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal" hidden>
+    <div class="dialog small">
+      <div class="dlg-body"><p id="confirmText" class="pre"></p>
+        <div class="dlg-actions"><button id="confirmCancel" class="btn">Cancel</button><button id="confirmOk" class="btn primary">OK</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="styleModal" class="modal" hidden>
+    <div class="dialog">
+      <div class="dlg-head"><span>Chart settings</span><button class="x" data-close><span class="ico"><svg viewBox="0 0 28 28"><path d="M8 8l12 12M20 8L8 20"/></svg></span></button></div>
+      <div id="styleBody" class="dlg-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

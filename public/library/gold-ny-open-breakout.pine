@@ -1,0 +1,118 @@
+// Gold NY Open Breakout — ChartDesk
+// Chart companion of the Strategy Tester's "Gold NY Open Breakout (1m)" strategy (same rules, same signals):
+//  1. Range = high/low of the first 60 minutes after the COMEX gold open (08:20 New York, DST-aware).
+//  2. Entry: a 1-minute close beyond the range ± 0.5 × ATR(60) during the next hour. If that breakout fails,
+//     one "second chance" trade is allowed when price closes beyond the OTHER side of the range.
+//  3. Stop at the range midpoint, trailing 1R behind the best price (from the next candle), target 2R.
+//  4. Anything still open two hours after the entry window is closed.
+// Signals use closed candles; in the backtest the order fills at the next candle's open.
+
+//@version=6
+indicator("Gold NY Open Breakout", "NY Open Breakout", overlay = true, max_boxes_count = 200, max_lines_count = 500, max_labels_count = 400)
+
+openHour   = input.int(8, "Open hour (New York)", minval = 0, maxval = 23, group = "Session")
+openMinute = input.int(20, "Open minute", minval = 0, maxval = 59, group = "Session")
+rangeMin   = input.int(60, "Range length (min)", minval = 5, group = "Session")
+windowMin  = input.int(60, "Entry window (min)", minval = 5, group = "Session")
+flatMin    = input.int(120, "Close after window (min)", minval = 0, group = "Session")
+bufAtr     = input.float(0.5, "Breakout buffer (× ATR 60)", minval = 0, step = 0.05, group = "Rules")
+useMid     = input.bool(true, "Stop at range midpoint", group = "Rules")
+second     = input.bool(true, "Second chance (opposite breakout)", group = "Rules")
+rr         = input.float(2.0, "Target (R multiple)", minval = 0.5, step = 0.5, group = "Rules")
+trailR     = input.float(1.0, "Trailing stop (R, 0 = off)", minval = 0, step = 0.25, group = "Rules")
+rangeCol   = input.color(color.new(#2962ff, 85), "Range", group = "Style")
+longCol    = input.color(#089981, "Long", group = "Style")
+shortCol   = input.color(#f23645, "Short", group = "Style")
+
+tz     = "America/New_York"
+nyMin  = hour(time, tz) * 60 + minute(time, tz)
+openAt = openHour * 60 + openMinute
+rel    = (nyMin - openAt + 1440) % 1440
+atr60  = ta.atr(60)
+maxTrades = second ? 2 : 1
+
+var float rh = na
+var float rl = na
+var int trades = 0
+var int lastDir = 0
+var box rangeBox = na
+var int dir = 0
+var float entry = na
+var float sl = na
+var float tp = na
+var float risk = na
+var float best = na
+var line enLine = na
+var line slLine = na
+var line tpLine = na
+
+longSignal = false
+shortSignal = false
+
+// a new session starts when the clock passes the open
+if rel < rangeMin and (rel < nz(rel[1], 1440) or na(rh))
+    rh := high
+    rl := low
+    trades := 0
+    lastDir := 0
+    rangeBox := box.new(bar_index, high, bar_index, low, border_color = color.new(rangeCol, 40), bgcolor = rangeCol, text = "NY range", text_color = color.new(#787b86, 0), text_size = size.small, text_halign = text.align_left, text_valign = text.align_top)
+else if rel < rangeMin
+    rh := math.max(rh, high)
+    rl := math.min(rl, low)
+    box.set_top(rangeBox, rh)
+    box.set_bottom(rangeBox, rl)
+    box.set_right(rangeBox, bar_index)
+
+closeTrade(string why, color c) =>
+    label.new(bar_index, dir > 0 ? high : low, why, style = dir > 0 ? label.style_label_down : label.style_label_up, color = color.new(c, 0), textcolor = color.white, size = size.tiny)
+
+// manage the open trade (visual only — the Strategy Tester simulates the real fills)
+if dir != 0
+    line.set_x2(enLine, bar_index)
+    line.set_x2(slLine, bar_index)
+    line.set_x2(tpLine, bar_index)
+    hitSl = dir > 0 ? low <= sl : high >= sl
+    hitTp = dir > 0 ? high >= tp : low <= tp
+    if hitSl
+        closeTrade((sl - entry) * dir > 0 ? "Trail" : "SL", (sl - entry) * dir > 0 ? #089981 : #f23645)
+        dir := 0
+    else if hitTp
+        closeTrade("TP", #089981)
+        dir := 0
+    else if rel >= rangeMin + windowMin + flatMin and rel < 1440 - 60
+        closeTrade("Time", #787b86)
+        dir := 0
+    else if trailR > 0
+        // trail from the next candle: best price so far minus trailR × initial risk
+        best := dir > 0 ? math.max(best, high) : math.min(best, low)
+        newSl = best - dir * trailR * risk
+        if (newSl - sl) * dir > 0
+            sl := newSl
+            slLine := line.new(bar_index, sl, bar_index, sl, color = #f23645, style = line.style_dotted)
+
+inWindow = rel >= rangeMin and rel < rangeMin + windowMin
+if inWindow and trades < maxTrades and dir == 0 and not na(rh) and rh > rl and not na(atr60)
+    pad = bufAtr * atr60
+    if close > rh + pad and lastDir != 1
+        longSignal := true
+    else if close < rl - pad and lastDir != -1
+        shortSignal := true
+    if longSignal or shortSignal
+        dir := longSignal ? 1 : -1
+        trades += 1
+        lastDir := dir
+        entry := close
+        sl := useMid ? (rh + rl) / 2 : (dir > 0 ? rl : rh)
+        risk := math.abs(entry - sl)
+        best := entry
+        tp := entry + dir * rr * risk
+        c = dir > 0 ? longCol : shortCol
+        enLine := line.new(bar_index, entry, bar_index, entry, color = c, width = 2)
+        slLine := line.new(bar_index, sl, bar_index, sl, color = #f23645, style = line.style_dashed)
+        tpLine := line.new(bar_index, tp, bar_index, tp, color = #089981, style = line.style_dashed)
+        label.new(bar_index, dir > 0 ? low : high, (trades > 1 ? "2nd " : "") + (dir > 0 ? "Long" : "Short"), style = dir > 0 ? label.style_label_up : label.style_label_down, color = c, textcolor = color.white, size = size.small)
+        alert((dir > 0 ? "LONG" : "SHORT") + " gold NY breakout · entry ~" + str.tostring(entry, format.mintick) + " · stop " + str.tostring(sl, format.mintick) + " · target " + str.tostring(tp, format.mintick))
+
+plot(rel >= rangeMin and rel < rangeMin + windowMin + flatMin ? rh : na, "Range high", color = color.new(#2962ff, 30), style = plot.style_linebr)
+plot(rel >= rangeMin and rel < rangeMin + windowMin + flatMin ? rl : na, "Range low", color = color.new(#2962ff, 30), style = plot.style_linebr)
+
