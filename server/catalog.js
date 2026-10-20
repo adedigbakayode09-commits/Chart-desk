@@ -25,6 +25,8 @@ export const CATALOG = [
   {
     symbol: 'XAUUSD', name: 'Gold / US Dollar', market: 'Precious Metals', type: 'metal', provider: 'dukascopy', session: 'fx',
     base: 'XAU', quote: 'USD', dk: 'xauusd', s3: 'XAUUSD', td: 'XAU/USD', point: 1000, precision: 3, tickSize: 0.001, pip: 0.1,
+    // Pepperstone feed pricescale=100/minmov=1; Pine trade quantities use 0.1 oz steps.
+    tvPine: { mintick: 0.01, qtyStep: 0.1 },
     contractSize: 100, lotName: 'lot (100 oz)', defaultSpread: 0.3, commissionPerLot: 7, range: [200, 20000],
   },
   {

@@ -1888,7 +1888,7 @@ export function runPine(src, data, inputs = {}, opts = {}) {
         strat = createStrategy({
           initial: opt(v[13]) ?? 1000000, qtyType: str(v[11] || 'fixed').replace('strategy.', '') || 'fixed', qtyValue: opt(v[12]) ?? 1, pyramiding: opt(v[6]) ?? 0,
           commissionType: str(v[16] || 'percent').replace('strategy.commission.', '') || 'percent', commission: opt(v[17]) ?? 0, slippage: opt(v[15]) ?? 0,
-          processOnClose: truthy(v[18] ?? false), closeEntriesRule: str(v[19] || 'FIFO'), mintick, ...ov,
+          processOnClose: truthy(v[18] ?? false), closeEntriesRule: str(v[19] || 'FIFO'), mintick, qtyStep: data.qtyStep || 0, ...ov,
         });
         strat.beforeBar(i, barAt(i));
         if (opt(v[20]) || opt(v[21])) warnings.add('Pine margin calls are not simulated; margin_long / margin_short can produce different results from the reference platform.');

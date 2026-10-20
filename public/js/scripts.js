@@ -206,7 +206,7 @@ self.onmessage = e => {
   const n = data.close.length;
   if (looksLikePine(code)) {
     try {
-      const sig = code.length + '|' + code.slice(0, 64) + '|' + JSON.stringify(inputs || {}) + '|' + JSON.stringify(strat || {}) + '|' + data.tf + '|' + data.symbol;
+      const sig = code.length + '|' + code.slice(0, 64) + '|' + JSON.stringify(inputs || {}) + '|' + JSON.stringify(strat || {}) + '|' + data.tf + '|' + data.symbol + '|' + data.mintick + '|' + data.qtyStep + '|' + data.session;
       let r = null;
       const live = key && sessions.get(key);
       if (live && !profile && live.sig === sig && live.session.extend) r = live.session.extend(data);
@@ -321,7 +321,7 @@ export async function runScript(code, bars, inputs = {}, ctx = {}) {
     const id = ++seq;
     const timer = setTimeout(() => { pending.delete(id); resolve({ id, error: `The script ran longer than ${TIME_LIMIT / 1000} s and was stopped.` }); resetWorker('Script engine restarted after a timeout.'); }, TIME_LIMIT);
     pending.set(id, { resolve, timer });
-    const data = { time: [], open: [], high: [], low: [], close: [], volume: [], tf: ctx.tf, symbol: ctx.symbol, mintick: ctx.mintick, session: ctx.session, security: ctx.security };
+    const data = { time: [], open: [], high: [], low: [], close: [], volume: [], tf: ctx.tf, symbol: ctx.symbol, mintick: ctx.mintick, qtyStep: ctx.qtyStep, session: ctx.session, security: ctx.security };
     for (const b of bars) { data.time.push(b.time); data.open.push(b.open); data.high.push(b.high); data.low.push(b.low); data.close.push(b.close); data.volume.push(b.volume || 0); }
     getWorker().postMessage({ id, code, data, inputs, libs, key: ctx.profile ? null : ctx.key, strat: ctx.strategy || null, profile: !!ctx.profile });
   });

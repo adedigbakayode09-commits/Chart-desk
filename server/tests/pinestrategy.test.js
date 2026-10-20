@@ -172,3 +172,25 @@ t=input.time(timestamp("2000-01-01T00:00:00Z"), "Start")
 plot(t+1)`, mk([[100,100,100,100]]), {Start:'946684800000'});
   assert.equal(r.plots[0].values[0], 946684800001);
 });
+
+test('Pepperstone Gold fills use 0.1-unit quantities and valid outward trigger ticks', () => {
+  const check = (dir, qty, entry, stop, limit, row, expected) => {
+    const body = `strategy("gold", process_orders_on_close=true, initial_capital=10000, commission_type=strategy.commission.cash_per_contract, commission_value=0.2)
+if bar_index == 0
+    strategy.entry("G", strategy.${dir}, qty=${qty})
+    strategy.exit("x", "G", ${stop == null ? `limit=${limit}` : `stop=${stop}`})`;
+    const r=runPine(body,{...mk([[entry,entry,entry,entry],row]),mintick:0.01,qtyStep:0.1}).strategy;
+    const t=r.trades[0];
+    assert.deepEqual([t.lots,t.exit,Number(t.pnl.toFixed(2))],expected);
+  };
+  check('long',47.6600557,4056.27,4045.7790345,null,[4056.27,4057,4040,4048],[47.6,4045.77,-518.84]);
+  check('long',48.3296,4052.78,null,4059.563,[4052.78,4060,4051,4059],[48.3,4059.57,308.64]);
+  check('short',53.60985,4052.76,4060.70358,null,[4052.76,4062,4050,4061],[53.6,4060.71,-447.56]);
+  check('short',2.19,100,null,95.237,[100,101,94,95],[2.1,95.23,9.18]);
+});
+
+test('a quantity below the provider minimum does not become a default-sized order', () => {
+  const r=runPine(`strategy("min",process_orders_on_close=true)
+strategy.entry("tiny",strategy.long,qty=0.09)`,{...mk([[100,100,100,100]]),qtyStep:0.1});
+  assert.equal(r.strategy.open.length,0);
+});

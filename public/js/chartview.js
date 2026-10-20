@@ -852,7 +852,10 @@ export class ChartView {
     }
   }
   /** Chart context handed to script indicators (timeframe in seconds, symbol, price tick, session model). */
-  scriptCtx() { return { tf: tfSec(this.cfg.tf), symbol: this.cfg.symbol, mintick: Math.pow(10, -this.prec), session: this.spec?.session || 'fx' }; }
+  scriptCtx() {
+    const native = this.spec?.provider === 'tradingview' ? this.spec.tvPine : null;
+    return { tf: tfSec(this.cfg.tf), symbol: this.cfg.symbol, mintick: native?.mintick ?? this.spec?.tickSize ?? Math.pow(10, -this.prec), qtyStep: native?.qtyStep ?? 0, session: this.spec?.session || 'fx' };
+  }
 
   removeIndicator(id) {
     this.cfg.indicators = this.cfg.indicators.filter(i => i.id !== id);

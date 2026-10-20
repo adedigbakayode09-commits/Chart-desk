@@ -13,7 +13,7 @@ export const QTY = { fixed: 'fixed', cash: 'cash', percent_of_equity: 'percent_o
 export function createStrategy(cfg = {}) {
   const C = {
     initial: 1000000, qtyType: 'fixed', qtyValue: 1, pyramiding: 0, commissionType: 'percent', commission: 0, slippage: 0,
-    processOnClose: false, mintick: 0.01, closeEntriesRule: 'FIFO', ...cfg,
+    processOnClose: false, mintick: 0.01, qtyStep: 0, closeEntriesRule: 'FIFO', ...cfg,
   };
   const S = {
     open: [], closed: [], orders: [], seq: 0, net: 0, gross: { profit: 0, loss: 0 }, equity: [], maxDD: 0, peak: C.initial,
@@ -29,12 +29,14 @@ export function createStrategy(cfg = {}) {
   const commissionOf = (qty, price) => (C.commissionType === 'cash_per_contract' ? qty * C.commission
     : C.commissionType === 'cash_per_order' ? C.commission : qty * price * C.commission / 100);
   const slip = dir => dir * C.slippage * C.mintick;
+  // Fill at the first tradable price reaching the trigger, not between ticks.
+  const triggerPrice = (level, dir) => round((dir > 0 ? Math.ceil(level / C.mintick - 1e-8) : Math.floor(level / C.mintick + 1e-8)) * C.mintick);
 
   function qtyFor(q, price) {
-    if (q != null && Number.isFinite(q) && q > 0) return q;
-    if (C.qtyType === 'cash') return C.qtyValue / price;
-    if (C.qtyType === 'percent_of_equity') return Math.max(0, equityAt(price) * C.qtyValue / 100 / price);
-    return C.qtyValue;
+    let qty = q != null && Number.isFinite(q) ? Math.max(0,q)
+      : C.qtyType === 'cash' ? C.qtyValue / price
+      : C.qtyType === 'percent_of_equity' ? Math.max(0, equityAt(price) * C.qtyValue / 100 / price) : C.qtyValue;
+    return C.qtyStep > 0 ? round(Math.floor(qty / C.qtyStep + 1e-9) * C.qtyStep) : qty;
   }
 
   function openTrade(id, dir, qty, price, comment) {
@@ -136,16 +138,16 @@ export function createStrategy(cfg = {}) {
     const out = [];
     for (const o of S.orders) {
       if (o.kind === 'entry' || o.kind === 'order') {
-        if (o.stop != null) out.push({ o, level: o.stop, dir: o.dir, stop: true });
-        else if (o.limit != null) out.push({ o, level: o.limit, dir: -o.dir, stop: false });
+        if (o.stop != null) out.push({ o, level: triggerPrice(o.stop, o.dir), dir: o.dir, stop: true });
+        else if (o.limit != null) out.push({ o, level: triggerPrice(o.limit, -o.dir), dir: -o.dir, stop: false });
       }
     }
     for (const o of S.orders.filter(x => x.kind === 'exit')) {
       for (const t of o.tickets || []) {
         if (t.done || !S.open.some(x => x.dir === t.dir) || (C.closeEntriesRule === 'ANY' && !S.open.includes(t.ref))) continue;
         const { tp, sl } = exitLevels(o, t);
-        if (tp != null) out.push({ o, t, level: tp, dir: t.dir, stop: false, kind: 'tp' });
-        if (sl != null) out.push({ o, t, level: sl, dir: -t.dir, stop: true, kind: t.trailing ? 'trail' : 'sl' });
+        if (tp != null) out.push({ o, t, level: triggerPrice(tp, t.dir), dir: t.dir, stop: false, kind: 'tp' });
+        if (sl != null) out.push({ o, t, level: triggerPrice(sl, -t.dir), dir: -t.dir, stop: true, kind: t.trailing ? 'trail' : 'sl' });
       }
     }
     return out;

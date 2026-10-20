@@ -166,7 +166,7 @@ export class Tester {
       h('div', { class: 'tester-form' },
         h('div', { class: 'tester-target' }, h('b', null, `${view.symbol} · ${tfLabel(view.cfg.tf)}`), h('span', { class: 'muted' }, 'active chart')),
         h('label', { class: 'field wide' }, h('span', null, 'Strategy'), this.strategySelect()),
-        h('p', { class: 'muted small' }, 'Pine simulation: market orders fill at the next open, or after execution at the signal close when the script requests it. Compare using the same symbol feed, timeframe, dates, inputs and properties. Higher-timeframe requests load up to 500 preceding provider candles for their lookbacks.',
+        h('p', { class: 'muted small' }, 'Pine simulation: market orders fill at the next open, or after execution at the signal close when the script requests it. Compare using the same symbol feed, timeframe, dates, inputs and properties. Higher-timeframe requests load up to 2,000 preceding intraday candles or 500 daily/weekly/monthly candles for their lookbacks.',
           ' ', h('button', { class: 'link', onclick: () => { this.app.showPanel('scripts'); this.app.scriptEditor.select(sc.id); } }, 'Edit script')),
         inputs.length ? h('div', { class: 'cs-heading' }, 'Inputs') : null, this.paramsForm.el,
         h('div', { class: 'cs-heading' }, 'Properties'), this.form.el,
@@ -210,7 +210,7 @@ export class Tester {
         const interval = intervals[key];
         if (!interval) { historyNotes.push(`No provider interval for ${key}; calculated from chart candles.`); continue; }
         this.setProgress(0.65, `Loading ${tfLabel(interval)} context and earlier history…`);
-        const prior = await fetchBars(view.symbol, interval, {before: bars[0].start ?? bars[0].time, limit: 500});
+        const prior = await fetchBars(view.symbol, interval, {before: bars[0].start ?? bars[0].time, limit: tfSec(interval) < 86400 ? 2000 : 500});
         const current = await fetchRange(view.symbol, interval, bars[0].start ?? bars[0].time, to);
         const rows = [...new Map([...prior.bars, ...current].map(b => [b.time, b])).values()].sort((a,b) => a.time-b.time);
         if (!rows.length) { historyNotes.push(`No ${key} provider history; calculated from chart candles.`); continue; }
