@@ -120,6 +120,44 @@ if bar_index == 1
   assert.equal(s.open.reduce((s,t)=>s+t.lots,0), 3);
 });
 
+test('FIFO retains the older bracket and its original quantity after a newer exit fills', () => {
+  const s = run(`if bar_index == 0
+    strategy.entry("A", strategy.short, qty=5)
+    strategy.exit("xA", "A", limit=90)
+if bar_index == 1
+    strategy.entry("B", strategy.short, qty=6)
+    strategy.exit("xB", "B", limit=95)`,
+  [[100,100,100,100],[100,100,100,100],[100,101,89,90]],
+  'strategy("brackets", pyramiding=10, process_orders_on_close=true)');
+  assert.deepEqual(s.trades.map(t=>[t.note,t.lots,t.exit,t.exitBar]), [['A',5,95,2],['B',1,95,2],['B',5,90,2]]);
+  assert.equal(s.open.length,0);
+});
+
+test('updating a bracket does not shrink it to its FIFO-reduced reference entry', () => {
+  const s = run(`if bar_index == 0
+    strategy.entry("A", strategy.short, qty=5)
+if bar_index == 1
+    strategy.entry("B", strategy.short, qty=3)
+strategy.exit("xA", "A", limit=90)
+strategy.exit("xB", "B", limit=95)`,
+  [[100,100,100,100],[100,100,100,100],[100,101,94,96],[96,97,89,90]],
+  'strategy("modify", pyramiding=10, process_orders_on_close=true)');
+  assert.deepEqual(s.trades.map(t=>[t.note,t.lots,t.exit]),[['A',3,95],['A',2,90],['B',3,90]]);
+  assert.equal(s.open.length,0);
+});
+
+test('a filled exit is not rearmed against its remaining FIFO reference entry', () => {
+  const s = run(`if bar_index == 0
+    strategy.entry("A", strategy.long, qty=5)
+if bar_index == 1
+    strategy.entry("B", strategy.long, qty=2)
+strategy.exit("xB", "B", limit=110)`,
+  [[100,100,100,100],[100,100,100,100],[100,111,99,105],[105,111,104,110]],
+  'strategy("once", pyramiding=10, process_orders_on_close=true)');
+  assert.deepEqual(s.trades.map(t=>[t.note,t.lots]),[['A',2]]);
+  assert.equal(s.open.reduce((sum,t)=>sum+t.lots,0),5);
+});
+
 test('runtime.error stops a strategy on the wrong chart timeframe', () => {
   assert.throws(() => runPine(`//@version=6
 strategy("guard")

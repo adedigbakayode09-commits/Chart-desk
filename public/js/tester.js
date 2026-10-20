@@ -379,7 +379,7 @@ export class Tester {
         h('td', { class: 'muted' }, fmtDateTime(t.exitTime)), h('td', null, fmtPrice(t.exit, p)), h('td', null, t.reason),
         h('td', null, +t.lots.toFixed(4)), h('td', null, t.r != null ? t.r.toFixed(2) : '—'),
         h('td', { class: t.pnl >= 0 ? 'up' : 'down' }, fmtUsd(t.pnl, true)), h('td', null, fmtUsd(t.balanceAfter))));
-      body = h('div', { class: 'tp-table' }, h('table', null, h('thead', null, h('tr', null, ['#', 'Type', 'Entry time', 'Entry', 'Exit time', 'Exit', 'Signal', 'Lots', 'R', 'P&L', 'Balance'].map(x => h('th', null, x)))), h('tbody', null, rows)));
+      body = h('div', { class: 'tp-table' }, h('table', null, h('thead', null, h('tr', null, ['#', 'Type', 'Entry time (UTC)', 'Entry', 'Exit time (UTC)', 'Exit', 'Signal', 'Lots', 'R', 'P&L', 'Balance'].map(x => h('th', null, x)))), h('tbody', null, rows)));
     }
     this.results.replaceChildren(head, tabs, body);
   }

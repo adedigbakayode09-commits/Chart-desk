@@ -20,6 +20,7 @@ export function createStrategy(cfg = {}) {
     events: [], // fills for chart markers: { i, kind: 'entry' | 'exit', dir, qty, price, id, comment }
   };
   let bar = null, barIndex = -1, barTime = 0;
+  const completedExits = new WeakMap();
 
   const round = v => Math.round(v * 1e10) / 1e10;
   const posSize = () => S.open.reduce((a, t) => a + t.dir * t.qty, 0);
@@ -41,6 +42,7 @@ export function createStrategy(cfg = {}) {
     const commission = commissionOf(qty, price);
     S.net -= commission;
     S.open.push({ id, dir, qty: round(qty), price: round(price), bar: barIndex, time: barTime, comment, commission, best: price, worst: price });
+    for (const o of S.orders) if (o.kind === 'exit') bindExit(o);
     S.events.push({ i: barIndex, kind: 'entry', dir, qty: round(qty), price: round(price), id, comment });
   }
   /** Close `qty` of trade t at `price` (the rest stays open). */
@@ -61,13 +63,16 @@ export function createStrategy(cfg = {}) {
     t.qty = round(t.qty - qty);
     t.commission -= entryComm;
     if (t.qty <= 1e-12) S.open.splice(S.open.indexOf(t), 1);
+    if (!S.open.some(x => x.dir === t.dir)) {
+      for (const o of S.orders) for (const ticket of o.tickets || []) if (ticket.dir === t.dir) ticket.done = true;
+    }
     return qty;
   }
   function closeAllAt(price, exitId, comment) { for (const t of [...S.open]) closeTrade(t, t.qty, price, exitId, comment); }
 
   // Entry IDs select the amount to exit; FIFO determines which entries supply it.
   function closePosition(target, qty, price, exitId, comment) {
-    const candidates = C.closeEntriesRule === 'ANY' ? [target] : S.open.filter(t => t.dir === target.dir);
+    const candidates = C.closeEntriesRule === 'ANY' ? [target.ref || target].filter(t => S.open.includes(t)) : S.open.filter(t => t.dir === target.dir);
     for (const t of [...candidates]) {
       if (qty <= 1e-12) break;
       qty -= closeTrade(t, Math.min(qty, t.qty), price, exitId, comment);
@@ -116,7 +121,15 @@ export function createStrategy(cfg = {}) {
     }
     return { tp, sl };
   }
-  const exitsFor = t => S.orders.filter(o => o.kind === 'exit' && (!o.from || o.from === t.id) && !o.filledTargets?.has(t));
+  function bindExit(o) {
+    o.tickets ||= [];
+    for (const t of S.open) {
+      if ((o.from && o.from !== t.id) || o.tickets.some(x => x.ref === t) || completedExits.get(t)?.has(o.id)) continue;
+      const reserved = S.orders.filter(x => x !== o && x.kind === 'exit').reduce((sum, x) => sum + (x.tickets || []).filter(k => k.ref === t && !k.done).reduce((s,k) => s+k.qty,0),0);
+      const qty = Math.min(Math.max(0,t.qty-reserved), o.qty ?? t.qty * (o.qtyPct ?? 100) / 100);
+      if (qty > 0) o.tickets.push({ref:t, qty, dir:t.dir, price:t.price, best:t.best, worst:t.worst, done:false});
+    }
+  }
 
   /** Triggers on the bar path: entries (limit / stop) and exits for each open trade. dir: +1 when hit rising. */
   function triggers() {
@@ -127,8 +140,9 @@ export function createStrategy(cfg = {}) {
         else if (o.limit != null) out.push({ o, level: o.limit, dir: -o.dir, stop: false });
       }
     }
-    for (const t of S.open) {
-      for (const o of exitsFor(t)) {
+    for (const o of S.orders.filter(x => x.kind === 'exit')) {
+      for (const t of o.tickets || []) {
+        if (t.done || !S.open.some(x => x.dir === t.dir) || (C.closeEntriesRule === 'ANY' && !S.open.includes(t.ref))) continue;
         const { tp, sl } = exitLevels(o, t);
         if (tp != null) out.push({ o, t, level: tp, dir: t.dir, stop: false, kind: 'tp' });
         if (sl != null) out.push({ o, t, level: sl, dir: -t.dir, stop: true, kind: t.trailing ? 'trail' : 'sl' });
@@ -138,10 +152,13 @@ export function createStrategy(cfg = {}) {
   }
   function execute(tr, price) {
     if (tr.t) { // exit
-      if (!S.open.includes(tr.t)) return;
-      const qty = tr.o.qty != null ? Math.min(tr.o.qty, tr.t.qty) : tr.t.qty * (tr.o.qtyPct ?? 100) / 100;
+      if (tr.t.done) return;
+      const qty = tr.t.qty;
       const comment = tr.kind === 'tp' ? (tr.o.commentProfit || tr.o.comment) : tr.kind === 'trail' ? (tr.o.commentTrailing || tr.o.comment) : (tr.o.commentLoss || tr.o.comment);
-      (tr.o.filledTargets ||= new Set()).add(tr.t);
+      tr.t.done = true;
+      let done = completedExits.get(tr.t.ref);
+      if (!done) { done = new Set(); completedExits.set(tr.t.ref, done); }
+      done.add(tr.o.id);
       closePosition(tr.t, qty, price, tr.o.id, comment || { tp: 'Take-profit', sl: 'Stop-loss', trail: 'Trailing stop' }[tr.kind]);
       return;
     }
@@ -149,7 +166,10 @@ export function createStrategy(cfg = {}) {
     fillEntry(tr.o, price);
     if (tr.o.oca) S.orders = S.orders.filter(x => x.oca !== tr.o.oca || x.kind === 'exit'); // one-cancels-all group
   }
-  function updateExcursion(price) { for (const t of S.open) { if ((price - t.best) * t.dir > 0) t.best = price; if ((price - t.worst) * t.dir < 0) t.worst = price; } }
+  function updateExcursion(price) {
+    const tickets = S.orders.flatMap(o => (o.tickets || []).filter(t => !t.done));
+    for (const t of [...S.open, ...tickets]) { if ((price - t.best) * t.dir > 0) t.best = price; if ((price - t.worst) * t.dir < 0) t.worst = price; }
+  }
 
   return {
     cfg: C,
@@ -202,6 +222,7 @@ export function createStrategy(cfg = {}) {
       // Orders created during this execution cannot change strategy.* mid-script.
       // process_orders_on_close adds a fill attempt after the entire execution.
       if (C.processOnClose) fillMarkets(b.close);
+      S.orders = S.orders.filter(o => o.kind !== 'exit' || !o.tickets?.length || o.tickets.some(t => !t.done));
       const eq = equityAt(b.close);
       if (eq > S.peak) S.peak = eq;
       S.maxDD = Math.max(S.maxDD, S.peak - eq);
@@ -220,11 +241,13 @@ export function createStrategy(cfg = {}) {
       S.orders.push(o);
     },
     exit(id, from, p = {}) {
+      const previous = S.orders.find(o => o.kind === 'exit' && o.id === id && (o.from || '') === (from || ''));
       S.orders = S.orders.filter(o => !(o.kind === 'exit' && o.id === id && (o.from || '') === (from || '')));
       const o = { kind: 'exit', id, from: from || '', qty: p.qty ?? null, qtyPct: p.qtyPct ?? 100, profit: p.profit ?? null, loss: p.loss ?? null, limit: p.limit ?? null, stop: p.stop ?? null,
-        trailPoints: p.trailPoints ?? null, trailOffset: p.trailOffset ?? null, trailPrice: p.trailPrice ?? null, comment: p.comment || '', commentProfit: p.commentProfit || '', commentLoss: p.commentLoss || '', commentTrailing: p.commentTrailing || '' };
+        trailPoints: p.trailPoints ?? null, trailOffset: p.trailOffset ?? null, trailPrice: p.trailPrice ?? null, comment: p.comment || '', commentProfit: p.commentProfit || '', commentLoss: p.commentLoss || '', commentTrailing: p.commentTrailing || '', tickets: previous?.tickets || [] };
       if ([o.profit, o.loss, o.limit, o.stop, o.trailOffset].every(v => v == null)) return; // nothing to exit with (Pine ignores it too)
-      S.orders.push(o);
+      bindExit(o);
+      if (o.tickets.some(t => !t.done) || S.orders.some(x => (x.kind === 'entry' || x.kind === 'order') && (!o.from || x.id === o.from))) S.orders.push(o);
     },
     close(id, { comment = '', qtyPct = 100, immediately = false } = {}) {
       if (!S.open.some(t => t.id === id)) return;
@@ -239,7 +262,7 @@ export function createStrategy(cfg = {}) {
     cancel(id) { S.orders = S.orders.filter(o => o.id !== id || o.kind === 'close'); },
     cancelAll() { S.orders = S.orders.filter(o => o.kind === 'close'); },
 
-    /** Results in the Strategy Tester's trade format (open trades closed at the last close as "Open"). */
+    /** Results in the Strategy Tester's trade format, with open positions reported separately. */
     report(lastClose, lastTime) {
       const trades = S.closed.map((t, k) => ({
         id: String(k + 1), side: t.dir > 0 ? 'buy' : 'sell', lots: t.qty, entry: t.entryPrice, exit: t.exitPrice, entryTime: t.entryTime, exitTime: t.exitTime,
